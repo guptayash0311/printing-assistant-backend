@@ -1,0 +1,43 @@
+[project]
+name = "printing-assistant-backend"
+version = "0.1.0"
+description = "Multi-tenant print shop API"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.32",
+  "sqlalchemy>=2.0",
+  "alembic>=1.14",
+  "psycopg[binary]>=3.2",
+  "pydantic-settings>=2.6",
+  "argon2-cffi>=23.1",
+  "pyjwt>=2.10",
+  "python-multipart>=0.0.12",
+  "pypdf>=5.1",
+  "redis>=5.2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3",
+  "httpx>=0.28",
+  "ruff>=0.8",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
