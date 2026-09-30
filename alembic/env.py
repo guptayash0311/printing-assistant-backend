@@ -4,6 +4,7 @@ from sqlalchemy import engine_from_config, pool
 
 from alembic import context
 from app.core.config import load_settings
+from app.core.database import ensure_libpq
 from app.models import Base
 
 config = context.config
@@ -11,7 +12,10 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
-config.set_main_option("sqlalchemy.url", load_settings().database_url)
+database_url = load_settings().database_url
+if database_url.startswith("postgresql"):
+    ensure_libpq()
+config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 
 
 def run_migrations_offline() -> None:

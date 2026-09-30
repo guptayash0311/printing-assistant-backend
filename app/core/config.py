@@ -1,10 +1,20 @@
+from urllib.parse import quote_plus
+
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_SQLITE_URL = "sqlite+pysqlite:///./dev.db"
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    database_url: str = "sqlite+pysqlite:///./dev.db"
+    postgres_user: str = ""
+    postgres_password: str = ""
+    postgres_host: str = "localhost"
+    postgres_port: int = 5432
+    postgres_db: str = ""
+    database_url: str = ""
     redis_url: str = "redis://localhost:6379/0"
     storage_root: str = "./data/files"
     jwt_secret: str = "dev-only-change-me"
@@ -20,6 +30,21 @@ class Settings(BaseSettings):
     upload_rate_limit: int = 30
     rate_limit_window_seconds: int = 60
     rate_limit_enabled: bool = True
+
+    @model_validator(mode="after")
+    def assemble_database_url(self) -> "Settings":
+        if self.database_url:
+            return self
+        if self.postgres_user and self.postgres_db:
+            user = quote_plus(self.postgres_user)
+            password = quote_plus(self.postgres_password)
+            name = quote_plus(self.postgres_db)
+            self.database_url = (
+                f"postgresql+psycopg://{user}:{password}@{self.postgres_host}:{self.postgres_port}/{name}"
+            )
+            return self
+        self.database_url = _SQLITE_URL
+        return self
 
     @property
     def cors_origin_list(self) -> list[str]:
