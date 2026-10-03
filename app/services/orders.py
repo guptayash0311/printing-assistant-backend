@@ -46,16 +46,17 @@ def public_tenant(db: Session, slug: str) -> Tenant:
     return tenant
 
 
-def create_order(db: Session, tenant: Tenant, name: str, phone: str) -> tuple[Order, str]:
-    contact = name.strip()
-    if len(contact) < 1:
-        raise DomainError("INVALID_CONTACT", "Enter the customer name.", 400)
-    normalized = normalize_phone(phone)
-    customer = get_or_create_customer(db, tenant.id, contact, normalized)
+def create_order(
+    db: Session, tenant: Tenant, name: str | None, phone: str | None
+) -> tuple[Order, str]:
+    contact = (name or "").strip() or None
+    raw_phone = (phone or "").strip()
+    normalized = normalize_phone(raw_phone) if raw_phone else None
+    customer = get_or_create_customer(db, tenant.id, contact, normalized) if normalized else None
     token = new_access_token()
     order = Order(
         tenant_id=tenant.id,
-        customer_id=customer.id,
+        customer_id=customer.id if customer else None,
         order_number=next_order_number(db, tenant.id),
         access_token_hash=hashlib.sha256(token.encode("utf-8")).hexdigest(),
         status="DRAFT",
@@ -65,8 +66,14 @@ def create_order(db: Session, tenant: Tenant, name: str, phone: str) -> tuple[Or
     )
     db.add(order)
     db.flush()
-    add_event(db, order, "ORDER_CREATED", "customer", str(customer.id), {})
+    add_event(db, order, "ORDER_CREATED", "customer", _customer_actor(order), {})
     return order, token
+
+
+def _customer_actor(order: Order) -> str | None:
+    if order.customer_id is None:
+        return None
+    return str(order.customer_id)
 
 
 def load_customer_order(db: Session, order_id: uuid.UUID, raw_token: str | None) -> Order:
@@ -136,7 +143,7 @@ def save_upload(
         except Exception as exc:
             storage.delete(key)
             raise DomainError("FILE_QUEUE_UNAVAILABLE", "File processing is unavailable.", 503) from exc
-    add_event(db, order, "FILE_UPLOADED", "customer", str(order.customer_id), {"file_id": str(order_file.id)})
+    add_event(db, order, "FILE_UPLOADED", "customer", _customer_actor(order), {"file_id": str(order_file.id)})
     return order_file
 
 
@@ -208,7 +215,7 @@ def calculate_order_price(db: Session, order: Order) -> Quote:
         order,
         "PRICE_CALCULATED",
         "customer",
-        str(order.customer_id),
+        _customer_actor(order),
         {"grand_total": money_str(quote.grand_total)},
     )
     return quote
@@ -243,7 +250,7 @@ def place_order(db: Session, order: Order) -> Order:
         order,
         "ORDER_PLACED",
         "customer",
-        str(order.customer_id),
+        _customer_actor(order),
         {"pickup_code": order.pickup_code, "grand_total": money_str(order.grand_total)},
     )
     db.flush()

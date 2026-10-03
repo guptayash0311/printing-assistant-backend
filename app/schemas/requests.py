@@ -10,8 +10,35 @@ class LoginIn(BaseModel):
 
 
 class CreateOrderIn(BaseModel):
-    contact_name: str = Field(min_length=1, max_length=200)
-    contact_phone: str = Field(min_length=8, max_length=20)
+    contact_name: str | None = None
+    contact_phone: str | None = None
+
+    @field_validator("contact_name", "contact_phone", mode="before")
+    @classmethod
+    def blank_is_none(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator("contact_name")
+    @classmethod
+    def name_length(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if len(stripped) > 200:
+            raise ValueError("Name is too long")
+        return stripped
+
+    @field_validator("contact_phone")
+    @classmethod
+    def phone_length(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if len(stripped) < 8 or len(stripped) > 20:
+            raise ValueError("Enter a valid phone number")
+        return stripped
 
 
 class SegmentIn(BaseModel):

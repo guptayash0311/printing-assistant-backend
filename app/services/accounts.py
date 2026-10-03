@@ -132,16 +132,18 @@ def new_pickup_code(db: Session, tenant_id: uuid.UUID) -> str:
     raise DomainError("PICKUP_CODE_FAILED", "Could not issue a pickup code.", 500)
 
 
-def get_or_create_customer(db: Session, tenant_id: uuid.UUID, name: str, phone: str) -> Customer:
+def get_or_create_customer(db: Session, tenant_id: uuid.UUID, name: str | None, phone: str) -> Customer:
     customer = db.scalar(
         select(Customer).where(Customer.tenant_id == tenant_id, Customer.phone == phone)
     )
+    display = (name or "").strip()
     if customer is None:
-        customer = Customer(tenant_id=tenant_id, name=name, phone=phone)
+        customer = Customer(tenant_id=tenant_id, name=display or "Guest", phone=phone)
         db.add(customer)
         db.flush()
         return customer
-    customer.name = name
+    if display:
+        customer.name = display
     return customer
 
 

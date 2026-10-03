@@ -1,3 +1,7 @@
+from sqlalchemy import func, select
+
+from app.core.database import get_session
+from app.models import Customer
 from tests.conftest import (
     PNG,
     auth_header,
@@ -220,3 +224,66 @@ def test_critical_path_and_immutable_price(client):
     )
     assert customer.json()["status"] == "COMPLETED"
     assert ready.status_code == 200
+
+
+def _created_actor(body: dict) -> str | None:
+    created = next(event for event in body["events"] if event["event_type"] == "ORDER_CREATED")
+    return created["actor_id"]
+
+
+def test_skipped_contact_creates_distinct_orders(client):
+    create_shop(client, "alpha")
+    first = client.post("/api/v1/public/shops/alpha/orders", json={})
+    second = client.post("/api/v1/public/shops/alpha/orders", json={"contact_name": "  ", "contact_phone": ""})
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+    assert first.json()["id"] != second.json()["id"]
+    for body in (first.json(), second.json()):
+        assert body["contact_name"] is None
+        assert body["contact_phone"] is None
+        assert _created_actor(body) is None
+    db = get_session()
+    try:
+        assert db.scalar(select(func.count()).select_from(Customer)) == 0
+    finally:
+        db.close()
+
+
+def test_same_phone_reuses_customer_without_replacing_name(client):
+    create_shop(client, "alpha")
+    first = client.post(
+        "/api/v1/public/shops/alpha/orders",
+        json={"contact_name": "Asha", "contact_phone": "+919876543210"},
+    )
+    second = client.post(
+        "/api/v1/public/shops/alpha/orders",
+        json={"contact_phone": "+919876543210"},
+    )
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+    assert first.json()["id"] != second.json()["id"]
+    assert _created_actor(first.json()) == _created_actor(second.json())
+    assert second.json()["contact_name"] is None
+    assert second.json()["contact_phone"] == "+919876543210"
+    db = get_session()
+    try:
+        customers = list(db.scalars(select(Customer)))
+        assert len(customers) == 1
+        assert customers[0].name == "Asha"
+    finally:
+        db.close()
+
+
+def test_name_without_phone_stays_on_the_order(client):
+    create_shop(client, "alpha")
+    response = client.post("/api/v1/public/shops/alpha/orders", json={"contact_name": "Ravi"})
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["contact_name"] == "Ravi"
+    assert body["contact_phone"] is None
+    assert _created_actor(body) is None
+    db = get_session()
+    try:
+        assert db.scalar(select(func.count()).select_from(Customer)) == 0
+    finally:
+        db.close()
