@@ -17,6 +17,7 @@ from app.services.orders import (
     load_customer_order,
     place_order,
     public_tenant,
+    remove_upload,
     replace_segments,
     save_upload,
     store_idempotent,
@@ -87,6 +88,20 @@ async def post_file(
     db.commit()
     db.refresh(saved)
     return file_dict(saved)
+
+
+@router.delete("/orders/{order_id}/files/{file_id}")
+def delete_file(
+    order_id: uuid.UUID,
+    file_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict:
+    order = load_customer_order(db, order_id, _token(request))
+    remove_upload(db, order, file_id)
+    db.commit()
+    db.refresh(order)
+    return order_dict(order)
 
 
 @router.get("/orders/{order_id}/files/{file_id}")

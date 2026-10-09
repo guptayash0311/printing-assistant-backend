@@ -274,6 +274,97 @@ def test_same_phone_reuses_customer_without_replacing_name(client):
         db.close()
 
 
+def _segment(file_id: str, pages: int, color_mode: str = "BW", copies: int = 1) -> dict:
+    return {
+        "file_id": file_id,
+        "page_start": 1,
+        "page_end": pages,
+        "paper_size": "A4",
+        "color_mode": color_mode,
+        "sides": "SIMPLEX",
+        "orientation": "PORTRAIT",
+        "copies": copies,
+    }
+
+
+def test_two_documents_price_with_their_own_options(client):
+    create_shop(client, "alpha")
+    created = open_order(client, "alpha")
+    headers = order_headers(created["access_token"])
+    notes = upload_pdf(client, created["id"], created["access_token"], pages=3)
+    photo = upload_pdf(client, created["id"], created["access_token"], pages=1)
+    saved = client.put(
+        f"/api/v1/public/orders/{created['id']}/segments",
+        headers=headers,
+        json={"segments": [_segment(notes["id"], 3), _segment(photo["id"], 1, color_mode="COLOR")]},
+    )
+    assert saved.status_code == 200, saved.text
+    price = client.post(f"/api/v1/public/orders/{created['id']}/calculate-price", headers=headers)
+    assert price.status_code == 200, price.text
+    assert price.json()["grand_total"] == "16.00"
+    assert len(price.json()["line_items"]) == 2
+
+
+def test_deleted_document_is_removed_and_the_rest_can_be_priced(client):
+    create_shop(client, "alpha")
+    created = open_order(client, "alpha")
+    headers = order_headers(created["access_token"])
+    notes = upload_pdf(client, created["id"], created["access_token"], pages=3)
+    photo = upload_pdf(client, created["id"], created["access_token"], pages=1)
+    saved = client.put(
+        f"/api/v1/public/orders/{created['id']}/segments",
+        headers=headers,
+        json={"segments": [_segment(notes["id"], 3), _segment(photo["id"], 1, color_mode="COLOR")]},
+    )
+    assert saved.status_code == 200, saved.text
+    priced = client.post(f"/api/v1/public/orders/{created['id']}/calculate-price", headers=headers)
+    assert priced.status_code == 200, priced.text
+    removed = client.delete(
+        f"/api/v1/public/orders/{created['id']}/files/{photo['id']}",
+        headers=headers,
+    )
+    assert removed.status_code == 200, removed.text
+    body = removed.json()
+    assert [item["id"] for item in body["files"]] == [notes["id"]]
+    assert [item["file_id"] for item in body["segments"]] == [notes["id"]]
+    assert body["status"] == "UPLOADED"
+    assert body["grand_total"] == "0.00"
+    price = client.post(f"/api/v1/public/orders/{created['id']}/calculate-price", headers=headers)
+    assert price.status_code == 200, price.text
+    assert price.json()["grand_total"] == "6.00"
+
+
+def test_deleted_ready_file_does_not_require_a_print_range(client):
+    create_shop(client, "alpha")
+    created = open_order(client, "alpha")
+    headers = order_headers(created["access_token"])
+    notes = upload_pdf(client, created["id"], created["access_token"], pages=2)
+    extra = upload_pdf(client, created["id"], created["access_token"], pages=1)
+    removed = client.delete(
+        f"/api/v1/public/orders/{created['id']}/files/{extra['id']}",
+        headers=headers,
+    )
+    assert removed.status_code == 200, removed.text
+    saved = client.put(
+        f"/api/v1/public/orders/{created['id']}/segments",
+        headers=headers,
+        json={"segments": [_segment(notes["id"], 2)]},
+    )
+    assert saved.status_code == 200, saved.text
+
+
+def test_placed_order_rejects_file_removal(client):
+    create_shop(client, "alpha")
+    created, placed, _price = _place(client, "alpha")
+    file_id = placed["files"][0]["id"]
+    removed = client.delete(
+        f"/api/v1/public/orders/{created['id']}/files/{file_id}",
+        headers=order_headers(created["access_token"]),
+    )
+    assert removed.status_code == 409
+    assert removed.json()["error"]["code"] == "INVALID_ORDER_STATE"
+
+
 def test_name_without_phone_stays_on_the_order(client):
     create_shop(client, "alpha")
     response = client.post("/api/v1/public/shops/alpha/orders", json={"contact_name": "Ravi"})

@@ -19,6 +19,7 @@ from app.models import (
     PrintSegment,
     Tenant,
     User,
+    utcnow,
 )
 from app.security.passwords import new_access_token, tokens_match
 from app.services.accounts import (
@@ -147,10 +148,32 @@ def save_upload(
     return order_file
 
 
+def remove_upload(db: Session, order: Order, file_id: uuid.UUID) -> None:
+    if order.status not in MUTABLE:
+        raise DomainError("INVALID_ORDER_STATE", "Files cannot be removed after the order is placed.", 409)
+    order_file = next((item for item in order.files if item.id == file_id and item.deleted_at is None), None)
+    if order_file is None:
+        raise DomainError("FILE_NOT_FOUND", "File was not found.", 404)
+    order_file.deleted_at = utcnow()
+    for segment in list(order.segments):
+        if segment.file_id == order_file.id:
+            db.delete(segment)
+    if order.status == "PRICE_CALCULATED":
+        _clear_quote(order)
+        order.status = "UPLOADED"
+    db.flush()
+    db.expire(order, ["segments", "files"])
+    add_event(db, order, "FILE_REMOVED", "customer", _customer_actor(order), {"file_id": str(order_file.id)})
+
+
 def replace_segments(db: Session, order: Order, segments: list[dict]) -> None:
     if order.status not in MUTABLE:
         raise DomainError("INVALID_ORDER_STATE", "Print options are locked after the order is placed.", 409)
-    files = {str(item.id): item for item in order.files if item.status == "READY"}
+    files = {
+        str(item.id): item
+        for item in order.files
+        if item.status == "READY" and item.deleted_at is None
+    }
     if not segments:
         raise DomainError("INVALID_PRINT_CONFIGURATION", "Add at least one print range.", 400)
     grouped: dict[str, list[tuple[int, int]]] = {}
@@ -403,7 +426,7 @@ def _move(db: Session, order: Order, target: str, user: User, event_type: str, m
 
 def _quote_order(db: Session, order: Order) -> Quote:
     ready = [item for item in order.files if item.status == "READY" and item.deleted_at is None]
-    if any(item.status in {"UPLOADING", "PROCESSING"} for item in order.files):
+    if any(item.status in {"UPLOADING", "PROCESSING"} and item.deleted_at is None for item in order.files):
         raise DomainError("FILE_NOT_READY", "Wait until every file has finished processing.", 409)
     if not ready:
         raise DomainError("FILE_NOT_READY", "Upload a PDF or image before pricing.", 409)
